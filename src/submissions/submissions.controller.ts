@@ -25,7 +25,6 @@ export class SubmissionsController {
     @Inject() private readonly agentService: AgentService,
   ) {}
 
-  // Submit new post (authenticated)
   @Post()
   @UseGuards(SupabaseAuthGuard)
   @UseInterceptors(FileInterceptor('image'))
@@ -34,7 +33,6 @@ export class SubmissionsController {
     @Body() body: CreateSubmissionDto,
     @Req() req,
   ) {
-    // Your existing submission logic remains unchanged
     if (!req.user?.id) {
       throw new UnauthorizedException('User must be authenticated to submit');
     }
@@ -60,8 +58,7 @@ export class SubmissionsController {
       imageUrl = publicUrlData.publicUrl;
     }
 
-    // Create submission with user_id
-    const { data: submission } = await this.supabase
+    const { data: submission, error: insertError } = await this.supabase
       .from('submissions')
       .insert([
         {
@@ -69,59 +66,51 @@ export class SubmissionsController {
           type: body.type,
           content: body.content,
           image_url: imageUrl,
+          status: 'pending',
+          moderation_stage: 'queued',
           created_at: new Date().toISOString(),
         },
       ])
       .select()
       .single();
 
-    // Run moderation
-    const result = await this.agentService.runModeration(submission.id);
+    if (insertError || !submission) {
+      throw new BadRequestException('Failed to create submission');
+    }
 
-    // Update submission with moderation results
-    await this.supabase
-      .from('submissions')
-      .update({
-        status: result.status,
-        summary: result.summary,
-        reasoning: result.reasoning,
-        toxicity: result.technicalAnalysis.toxicity,
-        nsfw_text: result.technicalAnalysis.nsfw_text,
-        nsfw_image: result.technicalAnalysis.nsfw_image,
-        violence: result.technicalAnalysis.violence,
-      })
-      .eq('id', submission.id);
+    this.agentService.runModerationAsync(submission.id).catch((err) => {
+      console.error(`Moderation failed for submission ${submission.id}:`, err);
+    });
 
     return {
       id: submission.id,
-      status: result.status,
-      summary: result.summary,
-      reasoning: result.reasoning,
+      status: 'pending',
+      moderation_stage: 'queued',
       imageUrl,
+      message: 'Submission received. Processing...',
     };
   }
 
-  // Public feed - only approved submissions
   @Get()
   async getAllSubmissions() {
     const { data, error } = await this.supabase
       .from('submissions')
       .select(
         `
-  id,
-  content,
-  image_url,
-  status,
-  toxicity,
-  nsfw_text,
-  nsfw_image,
-  violence,
-  created_at,
-  user_id
-`,
+        id,
+        content,
+        image_url,
+        status,
+        toxicity,
+        nsfw_text,
+        nsfw_image,
+        violence,
+        image_replaced_by_ai,
+        created_at,
+        user_id
+      `,
       )
-
-      .eq('status', 'approved') // ✅ show only approved posts
+      .eq('status', 'approved')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -133,18 +122,17 @@ export class SubmissionsController {
     return data.map((submission: any) => ({
       id: submission.id,
       user: { id: submission.user_id },
-
       content: submission.content,
       imageUrl: submission.image_url || undefined,
       uploaded: submission.status,
       toxicity: submission.toxicity || 0,
       nsfw_content: submission.nsfw_text || submission.nsfw_image || false,
       violence: submission.violence || false,
+      image_replaced_by_ai: submission.image_replaced_by_ai || false,
       uploaddate: new Date(submission.created_at).toISOString(),
     }));
   }
 
-  // Get user's submissions (authenticated)
   @Get('user/my-submissions')
   @UseGuards(SupabaseAuthGuard)
   async getUserSubmissions(@Req() req) {
@@ -156,19 +144,20 @@ export class SubmissionsController {
       .from('submissions')
       .select(
         `
-  id,
-  content,
-  image_url,
-  status,
-  toxicity,
-  nsfw_text,
-  nsfw_image,
-  violence,
-  created_at,
-  user_id
-`,
+        id,
+        content,
+        image_url,
+        status,
+        moderation_stage,
+        toxicity,
+        nsfw_text,
+        nsfw_image,
+        violence,
+        image_replaced_by_ai,
+        created_at,
+        user_id
+      `,
       )
-
       .eq('user_id', req.user.id)
       .order('created_at', { ascending: false });
 
@@ -181,20 +170,20 @@ export class SubmissionsController {
     return data.map((submission: any) => ({
       id: submission.id,
       user: { id: submission.user_id },
-
       content: submission.content,
       imageUrl: submission.image_url || undefined,
-      uploaded: submission.status,
+      status: submission.status,
+      moderation_stage: submission.moderation_stage,
       summary: submission.summary,
       reasoning: submission.reasoning,
       toxicity: submission.toxicity || 0,
       nsfw_content: submission.nsfw_text || submission.nsfw_image || false,
       violence: submission.violence || false,
+      image_replaced_by_ai: submission.image_replaced_by_ai || false,
       uploaddate: new Date(submission.created_at).toISOString(),
     }));
   }
 
-  // Check status of a single submission
   @Get(':id/status')
   @UseGuards(SupabaseAuthGuard)
   async getStatus(@Param('id') id: string, @Req() req) {
@@ -217,11 +206,13 @@ export class SubmissionsController {
     return {
       id: data.id,
       status: data.status,
+      moderation_stage: data.moderation_stage,
       summary: data.summary,
       reasoning: data.reasoning,
       toxicity: data.toxicity || 0,
       nsfw_content: data.nsfw_text || data.nsfw_image || false,
       violence: data.violence || false,
+      image_replaced_by_ai: data.image_replaced_by_ai || false,
       imageUrl: data.image_url,
       uploaddate: new Date(data.created_at).toISOString(),
     };
