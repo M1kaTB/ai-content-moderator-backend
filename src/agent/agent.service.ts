@@ -1,3 +1,4 @@
+// /src/agent/agent.service.ts
 import { Injectable, Inject } from '@nestjs/common';
 import { moderationAgent } from './moderation.agent';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -45,7 +46,6 @@ export class AgentService {
       summary,
       reasoning,
       technicalAnalysis,
-      needVisualization: false,
     };
   }
 
@@ -55,12 +55,15 @@ export class AgentService {
     if (analysis.toxicity !== undefined) {
       parts.push(`Toxicity: ${(analysis.toxicity * 100).toFixed(1)}%`);
     }
+
     if (analysis.nsfw_text) {
       parts.push('NSFW text detected');
     }
+
     if (analysis.nsfw_image) {
       parts.push('NSFW image detected');
     }
+
     if (analysis.violence) {
       parts.push('Violence detected');
     }
