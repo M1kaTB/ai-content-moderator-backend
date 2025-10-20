@@ -45,16 +45,35 @@ export class AgentService {
       };
 
       let finalImageUrl = row.image_url;
-      const imageWasReplaced = technicalAnalysis.image_replaced_by_ai ?? false;
+      let imageWasReplaced =
+        finalState.technicalAnalysis?.image_replaced_by_ai ?? false;
 
-      if (imageWasReplaced && finalState.generatedImageUrl) {
-        await this.updateSubmissionStage(
-          submissionId,
-          'uploading_generated_image',
-        );
-        finalImageUrl = await this.uploadGeneratedImage(
-          finalState.generatedImageUrl,
-        );
+      if (imageWasReplaced) {
+        if (finalState.generatedImageBase64) {
+          await this.updateSubmissionStage(
+            submissionId,
+            'uploading_generated_image',
+          );
+          const uploadedUrl = await this.uploadGeneratedImage(
+            finalState.generatedImageBase64,
+            true,
+          );
+          if (uploadedUrl) {
+            finalImageUrl = uploadedUrl;
+          } else {
+            imageWasReplaced = false;
+          }
+        } else if (finalState.generatedImageUrl) {
+          await this.updateSubmissionStage(
+            submissionId,
+            'uploading_generated_image',
+          );
+          const uploadedUrl = await this.uploadGeneratedImage(
+            finalState.generatedImageUrl,
+            false,
+          );
+          if (uploadedUrl) finalImageUrl = uploadedUrl;
+        }
       }
 
       const reasoning = this.buildReasoning(status, technicalAnalysis);
@@ -116,21 +135,30 @@ export class AgentService {
       .eq('id', submissionId);
   }
 
-  private async uploadGeneratedImage(imageUrl: string): Promise<string> {
+  private async uploadGeneratedImage(
+    imageSource: string,
+    isBase64 = false,
+  ): Promise<string> {
     try {
-      const imageBuffer = await this.downloadImage(imageUrl);
+      let buffer: Buffer;
+      if (isBase64) {
+        buffer = Buffer.from(imageSource, 'base64');
+      } else {
+        const response = await axios.get(imageSource, {
+          responseType: 'arraybuffer',
+        });
+        buffer = Buffer.from(response.data);
+      }
 
       const fileName = `ai-generated-${Date.now()}-${Math.random().toString(36).substring(2)}.png`;
       const { data: uploadData, error: uploadError } =
-        await this.supabase.storage
-          .from('images')
-          .upload(fileName, imageBuffer, {
-            contentType: 'image/png',
-          });
+        await this.supabase.storage.from('images').upload(fileName, buffer, {
+          contentType: 'image/png',
+        });
 
       if (uploadError) {
         console.error('Failed to upload generated image:', uploadError);
-        return imageUrl;
+        return isBase64 ? '' : imageSource;
       }
 
       const { data: publicUrlData } = this.supabase.storage
@@ -138,17 +166,10 @@ export class AgentService {
         .getPublicUrl(uploadData.path);
 
       return publicUrlData.publicUrl;
-    } catch (error) {
-      console.error('Image upload failed:', error);
-      return imageUrl;
+    } catch (err) {
+      console.error('uploadGeneratedImage error:', err);
+      return isBase64 ? '' : imageSource;
     }
-  }
-
-  private async downloadImage(url: string): Promise<Buffer> {
-    const response = await axios.get(url, {
-      responseType: 'arraybuffer',
-    });
-    return Buffer.from(response.data);
   }
 
   private determineFinalStatus(

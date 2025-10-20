@@ -22,6 +22,7 @@
   "dependencies": {
     "@google-cloud/vertexai": "^1.10.0",
     "@google/genai": "^1.25.0",
+    "@google/generative-ai": "^0.24.1",
     "@langchain/core": "^1.0.1",
     "@langchain/google-genai": "^1.0.0",
     "@langchain/langgraph": "^1.0.0",
@@ -31,6 +32,8 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/platform-socket.io": "^11.1.6",
+    "@nestjs/websockets": "^11.1.6",
     "@supabase/supabase-js": "^2.75.1",
     "axios": "^1.12.2",
     "class-transformer": "^0.5.1",
@@ -38,6 +41,7 @@
     "openai": "^6.5.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "socket.io": "^4.8.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {
